@@ -67,20 +67,18 @@ describe('openSerialSession', () => {
 		await Effect.runPromise(session.close);
 	});
 
-	it('discards a partial attempt and retries the command', async () => {
+	it('keeps discarding partial attempts until a complete response arrives', async () => {
 		const writes: string[] = [];
 		const encoder = new TextEncoder();
 		const { port } = makePort((command, controller) => {
 			writes.push(command);
-			controller.enqueue(
-				encoder.encode(writes.length === 1 ? '[I] 00: PARTIAL' : COMPLETE_RESPONSE)
-			);
+			controller.enqueue(encoder.encode(writes.length < 5 ? '[I] 00: PARTIAL' : COMPLETE_RESPONSE));
 		});
 		const session = await Effect.runPromise(openSerialSession(port));
 
 		const response = await Effect.runPromise(session.transact('w f5 23'));
 
-		expect(writes).toEqual(['w f5 23\r', 'w f5 23\r']);
+		expect(writes).toEqual(Array.from({ length: 5 }, () => 'w f5 23\r'));
 		expect(response).toBe(COMPLETE_RESPONSE);
 		await Effect.runPromise(session.close);
 	});

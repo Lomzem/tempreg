@@ -1,7 +1,6 @@
 import { Effect } from 'effect';
 
 import {
-	PartialResponseError,
 	SerialConnectionError,
 	SerialReadError,
 	SerialUnsupportedError,
@@ -17,7 +16,6 @@ export const SERIAL_OPTIONS: SerialOptions = {
 };
 
 export const RESPONSE_IDLE_TIMEOUT_MS = 100;
-export const RESPONSE_RETRIES = 2;
 
 const COMPLETE_RESPONSE_PATTERN = /(?:^|\r?\n|\r)\[I\]\s+09:\s*[0-9A-Fa-f]{8}(?=\r?\n|\r|$)/;
 
@@ -157,42 +155,35 @@ export const openSerialSession = (port: SerialPort): Effect.Effect<SerialSession
 		};
 		void readPump();
 
-		const runAttempt = (command: string, attempt: number): Effect.Effect<string, SerialError> =>
+		const runTransaction = (command: string): Effect.Effect<string, SerialError> =>
 			Effect.gen(function* () {
-				inbox.clear();
-				yield* Effect.tryPromise({
-					try: () => writer.write(encoder.encode(`${command}\r`)),
-					catch: (cause) =>
-						new SerialWriteError({ message: 'Could not write the UART command.', cause })
-				});
-
-				let response = '';
 				while (true) {
-					const result = yield* Effect.tryPromise({
-						try: () => inbox.take(RESPONSE_IDLE_TIMEOUT_MS),
+					inbox.clear();
+					yield* Effect.tryPromise({
+						try: () => writer.write(encoder.encode(`${command}\r`)),
 						catch: (cause) =>
-							cause instanceof SerialReadError
-								? cause
-								: new SerialReadError({ message: 'Could not read the UART response.', cause })
+							new SerialWriteError({ message: 'Could not write the UART command.', cause })
 					});
 
-					if (result._tag === 'Timeout') {
-						const error = new PartialResponseError({
-							message: `Response did not reach [I] 09: after ${attempt + 1} attempt${attempt === 0 ? '' : 's'}.`,
-							partialResponse: response,
-							attempts: attempt + 1
+					let response = '';
+					while (true) {
+						const result = yield* Effect.tryPromise({
+							try: () => inbox.take(RESPONSE_IDLE_TIMEOUT_MS),
+							catch: (cause) =>
+								cause instanceof SerialReadError
+									? cause
+									: new SerialReadError({ message: 'Could not read the UART response.', cause })
 						});
-						return attempt < RESPONSE_RETRIES
-							? yield* runAttempt(command, attempt + 1)
-							: yield* Effect.fail(error);
-					}
 
-					response += result.value;
-					if (COMPLETE_RESPONSE_PATTERN.test(response)) return response.trimEnd();
+						if (result._tag === 'Timeout') break;
+
+						response += result.value;
+						if (COMPLETE_RESPONSE_PATTERN.test(response)) return response.trimEnd();
+					}
 				}
 			});
 
-		const transact = (command: string) => semaphore.withPermits(1)(runAttempt(command, 0));
+		const transact = (command: string) => semaphore.withPermits(1)(runTransaction(command));
 		const close = Effect.tryPromise({
 			try: async () => {
 				closing = true;

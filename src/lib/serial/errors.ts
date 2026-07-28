@@ -19,15 +19,5 @@ export class SerialWriteError extends Data.TaggedError('SerialWriteError')<{
 	cause?: unknown;
 }> {}
 
-export class PartialResponseError extends Data.TaggedError('PartialResponseError')<{
-	message: string;
-	partialResponse: string;
-	attempts: number;
-}> {}
-
 export type SerialError =
-	| SerialUnsupportedError
-	| SerialConnectionError
-	| SerialReadError
-	| SerialWriteError
-	| PartialResponseError;
+	SerialUnsupportedError | SerialConnectionError | SerialReadError | SerialWriteError;
