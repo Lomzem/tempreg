@@ -21,7 +21,8 @@ export interface AuthorizedPort {
 }
 
 type EffectResult<A> =
-	{ readonly ok: true; readonly value: A } | { readonly ok: false; readonly error: string };
+	| { readonly ok: true; readonly value: A }
+	| { readonly ok: false; readonly error: string; readonly aborted: boolean };
 
 export class DashboardState {
 	browserSupported = $state(false);
@@ -42,20 +43,34 @@ export class DashboardState {
 	status = $state('Waiting for browser initialization.');
 
 	private pollTimer: ReturnType<typeof setTimeout> | undefined;
+	private commandRestartTimer: ReturnType<typeof setTimeout> | undefined;
+	private activeTransaction: AbortController | undefined;
+	private transactionGeneration = 0;
+	private restartInterruptedTransaction = false;
 	private disposed = false;
 	private serial: Serial | undefined;
 
 	private runEffect = async <A, E extends { message: string }>(
-		effect: Effect.Effect<A, E>
-	): Promise<EffectResult<A>> =>
-		Effect.runPromise(
-			effect.pipe(
-				Effect.match({
-					onFailure: (failure) => ({ ok: false, error: failure.message }) as const,
-					onSuccess: (value) => ({ ok: true, value }) as const
-				})
-			)
+		effect: Effect.Effect<A, E>,
+		signal?: AbortSignal
+	): Promise<EffectResult<A>> => {
+		const result = effect.pipe(
+			Effect.match({
+				onFailure: (failure) => ({ ok: false, error: failure.message, aborted: false }) as const,
+				onSuccess: (value) => ({ ok: true, value }) as const
+			})
 		);
+
+		try {
+			return signal ? await Effect.runPromise(result, { signal }) : await Effect.runPromise(result);
+		} catch (cause) {
+			return {
+				ok: false,
+				error: cause instanceof Error ? cause.message : 'Unexpected Effect failure.',
+				aborted: signal?.aborted ?? false
+			};
+		}
+	};
 
 	initialize = (): (() => void) => {
 		this.disposed = false;
@@ -100,8 +115,23 @@ export class DashboardState {
 	};
 
 	setCommand = (command: string) => {
+		const interruptedTransaction = this.activeTransaction !== undefined;
+		this.restartInterruptedTransaction ||= interruptedTransaction;
 		this.command = command;
 		localStorage.setItem(COMMAND_STORAGE_KEY, command);
+		this.clearPollTimer();
+		this.invalidateActiveTransaction();
+		this.clearCommandRestartTimer(false);
+
+		if (!this.session || (!this.livePolling && !this.restartInterruptedTransaction)) return;
+		this.commandRestartTimer = setTimeout(() => {
+			this.commandRestartTimer = undefined;
+			const shouldRestart = this.livePolling || this.restartInterruptedTransaction;
+			this.restartInterruptedTransaction = false;
+			if (!this.disposed && this.session && this.command.trim() && shouldRestart) {
+				void this.refresh();
+			}
+		}, 250);
 	};
 
 	setPollingInterval = (interval: number | undefined) => {
@@ -160,6 +190,8 @@ export class DashboardState {
 	};
 
 	disconnect = async () => {
+		this.clearCommandRestartTimer();
+		this.invalidateActiveTransaction();
 		this.stopPolling();
 		const activeSession = this.session;
 		this.session = undefined;
@@ -189,21 +221,26 @@ export class DashboardState {
 		const command = this.command.trim();
 		if (!activeSession || this.busy || !command) return false;
 
+		const generation = ++this.transactionGeneration;
+		const controller = new AbortController();
+		this.activeTransaction = controller;
 		this.busy = true;
 		this.error = undefined;
-		this.status = 'Reading temperature…';
+		this.status = 'Reading current';
 		const transaction = await this.runEffect(
 			activeSession.transact(command, (response) => {
-				if (!this.disposed && this.session === activeSession) this.latestResponse = response;
-			})
+				if (this.isCurrentTransaction(generation, controller, activeSession)) {
+					this.latestResponse = response;
+				}
+			}),
+			controller.signal
 		);
-		if (this.disposed || this.session !== activeSession) {
-			this.busy = false;
-			return false;
-		}
+		if (!this.isCurrentTransaction(generation, controller, activeSession)) return false;
 
 		if (!transaction.ok) {
+			this.activeTransaction = undefined;
 			this.busy = false;
+			if (transaction.aborted) return false;
 			this.stopPolling();
 			this.connectionStatus = 'error';
 			this.error = transaction.error;
@@ -213,6 +250,8 @@ export class DashboardState {
 
 		this.latestResponse = transaction.value;
 		const parsed = await this.runEffect(parseTemperatureResponse(transaction.value));
+		if (!this.isCurrentTransaction(generation, controller, activeSession)) return false;
+		this.activeTransaction = undefined;
 		this.busy = false;
 		if (!parsed.ok) {
 			this.stopPolling();
@@ -228,6 +267,31 @@ export class DashboardState {
 		this.connectionStatus = 'connected';
 		this.status = 'Reading current';
 		return true;
+	};
+
+	private isCurrentTransaction = (
+		generation: number,
+		controller: AbortController,
+		session: SerialSession
+	): boolean =>
+		!this.disposed &&
+		this.transactionGeneration === generation &&
+		this.activeTransaction === controller &&
+		this.session === session;
+
+	private invalidateActiveTransaction = () => {
+		this.transactionGeneration += 1;
+		const activeTransaction = this.activeTransaction;
+		this.activeTransaction = undefined;
+		if (!activeTransaction) return;
+		activeTransaction.abort();
+		this.busy = false;
+	};
+
+	private clearCommandRestartTimer = (clearIntent = true) => {
+		if (this.commandRestartTimer !== undefined) clearTimeout(this.commandRestartTimer);
+		this.commandRestartTimer = undefined;
+		if (clearIntent) this.restartInterruptedTransaction = false;
 	};
 
 	setLivePolling = (enabled: boolean) => {
@@ -259,6 +323,8 @@ export class DashboardState {
 	private handlePhysicalDisconnect = () => {
 		const activeSession = this.session;
 		if (!activeSession || activeSession.port.connected) return;
+		this.clearCommandRestartTimer();
+		this.invalidateActiveTransaction();
 		this.stopPolling();
 		this.session = undefined;
 		this.connectionStatus = 'disconnected';
@@ -270,6 +336,8 @@ export class DashboardState {
 	destroy = () => {
 		if (this.disposed) return;
 		this.disposed = true;
+		this.clearCommandRestartTimer();
+		this.invalidateActiveTransaction();
 		this.stopPolling();
 		this.serial?.removeEventListener('disconnect', this.handlePhysicalDisconnect);
 		this.serial = undefined;

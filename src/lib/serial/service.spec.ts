@@ -109,4 +109,26 @@ describe('openSerialSession', () => {
 		expect(response).toBe(COMPLETE_RESPONSE);
 		await Effect.runPromise(session.close);
 	});
+
+	it('cancels a pending read without consuming the restarted transaction', async () => {
+		const encoder = new TextEncoder();
+		let writes = 0;
+		const { port } = makePort((_command, controller) => {
+			writes += 1;
+			controller.enqueue(encoder.encode(writes === 1 ? '[I] 00: PARTIAL' : COMPLETE_RESPONSE));
+		});
+		const session = await Effect.runPromise(openSerialSession(port));
+		const abortController = new AbortController();
+		const pending = Effect.runPromise(session.transact('first'), {
+			signal: abortController.signal
+		});
+
+		await new Promise((resolve) => setTimeout(resolve, 10));
+		abortController.abort();
+		await expect(pending).rejects.toThrow();
+
+		await expect(Effect.runPromise(session.transact('second'))).resolves.toBe(COMPLETE_RESPONSE);
+		expect(writes).toBe(2);
+		await Effect.runPromise(session.close);
+	});
 });

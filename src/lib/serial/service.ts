@@ -52,21 +52,32 @@ class ChunkInbox {
 		this.chunks = [];
 	}
 
-	take(timeoutMs: number): Promise<InboxResult> {
+	take(timeoutMs: number, signal?: AbortSignal): Promise<InboxResult> {
 		if (this.failure) return Promise.reject(this.failure);
+		if (signal?.aborted) return Promise.reject(signal.reason);
 		const chunk = this.chunks.shift();
 		if (chunk !== undefined) return Promise.resolve({ _tag: 'Chunk', value: chunk });
 
-		return new Promise((resolve) => {
-			const waiter = (result: InboxResult) => {
+		return new Promise((resolve, reject) => {
+			const cleanup = () => {
 				clearTimeout(timer);
+				this.waiters.delete(waiter);
+				signal?.removeEventListener('abort', onAbort);
+			};
+			const waiter = (result: InboxResult) => {
+				cleanup();
 				resolve(result);
 			};
+			const onAbort = () => {
+				cleanup();
+				reject(signal?.reason);
+			};
 			const timer = setTimeout(() => {
-				this.waiters.delete(waiter);
+				cleanup();
 				resolve({ _tag: 'Timeout' });
 			}, timeoutMs);
 			this.waiters.add(waiter);
+			signal?.addEventListener('abort', onAbort, { once: true });
 		});
 	}
 }
@@ -179,9 +190,10 @@ export const openSerialSession = (port: SerialPort): Effect.Effect<SerialSession
 					let rawResponse = '';
 					while (true) {
 						const result = yield* Effect.tryPromise({
-							try: () =>
+							try: (signal) =>
 								inbox.take(
-									rawResponse ? PARTIAL_RESPONSE_IDLE_TIMEOUT_MS : RESPONSE_IDLE_TIMEOUT_MS
+									rawResponse ? PARTIAL_RESPONSE_IDLE_TIMEOUT_MS : RESPONSE_IDLE_TIMEOUT_MS,
+									signal
 								),
 							catch: (cause) =>
 								cause instanceof SerialReadError
