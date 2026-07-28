@@ -1,5 +1,6 @@
 import { Effect } from 'effect';
 import { createContext } from 'svelte';
+import { SvelteDate } from 'svelte/reactivity';
 
 import {
 	getAuthorizedPorts,
@@ -8,6 +9,7 @@ import {
 	serialPortLabel,
 	type SerialSession
 } from '$lib/serial/service';
+import type { RecordedTemperatureSample } from '$lib/recording';
 import { parseTemperatureResponse } from '$lib/temperature';
 
 const COMMAND_STORAGE_KEY = 'tempreg.uart-command';
@@ -41,6 +43,9 @@ export class DashboardState {
 	temperatureC = $state<number | undefined>(undefined);
 	error = $state<string | undefined>(undefined);
 	status = $state('Waiting for browser initialization.');
+	recording = $state(false);
+	recordingStartedAt = $state<string | undefined>(undefined);
+	recordedSamples = $state.raw<RecordedTemperatureSample[]>([]);
 
 	private pollTimer: ReturnType<typeof setTimeout> | undefined;
 	private commandRestartTimer: ReturnType<typeof setTimeout> | undefined;
@@ -190,6 +195,7 @@ export class DashboardState {
 	};
 
 	disconnect = async () => {
+		this.finalizeRecording();
 		this.clearCommandRestartTimer();
 		this.invalidateActiveTransaction();
 		this.stopPolling();
@@ -214,6 +220,22 @@ export class DashboardState {
 		this.clearPollTimer();
 		const succeeded = await this.performRefresh();
 		if (succeeded && this.livePolling && this.session) this.schedulePoll();
+	};
+
+	startRecording = (): boolean => {
+		if (!this.session || this.busy || !this.command.trim() || this.recording) return false;
+
+		this.recordedSamples = [];
+		this.recordingStartedAt = new SvelteDate().toISOString();
+		this.recording = true;
+		if (!this.livePolling) this.setLivePolling(true);
+		return true;
+	};
+
+	stopRecording = (): boolean => {
+		if (!this.recording) return false;
+		this.recording = false;
+		return true;
 	};
 
 	private performRefresh = async (): Promise<boolean> => {
@@ -241,6 +263,7 @@ export class DashboardState {
 			this.activeTransaction = undefined;
 			this.busy = false;
 			if (transaction.aborted) return false;
+			this.finalizeRecording();
 			this.stopPolling();
 			this.connectionStatus = 'error';
 			this.error = transaction.error;
@@ -254,6 +277,7 @@ export class DashboardState {
 		this.activeTransaction = undefined;
 		this.busy = false;
 		if (!parsed.ok) {
+			this.finalizeRecording();
 			this.stopPolling();
 			this.connectionStatus = 'error';
 			this.error = parsed.error;
@@ -264,6 +288,15 @@ export class DashboardState {
 		this.extractedByte = parsed.value.extractedHex;
 		this.decimalValue = parsed.value.decimalValue;
 		this.temperatureC = parsed.value.temperatureC;
+		if (this.recording) {
+			this.recordedSamples = [
+				...this.recordedSamples,
+				{
+					timestamp: new SvelteDate().toISOString(),
+					temperatureC: parsed.value.temperatureC
+				}
+			];
+		}
 		this.connectionStatus = 'connected';
 		this.status = 'Reading current';
 		return true;
@@ -320,9 +353,14 @@ export class DashboardState {
 		this.clearPollTimer();
 	};
 
+	private finalizeRecording = () => {
+		this.recording = false;
+	};
+
 	private handlePhysicalDisconnect = () => {
 		const activeSession = this.session;
 		if (!activeSession || activeSession.port.connected) return;
+		this.finalizeRecording();
 		this.clearCommandRestartTimer();
 		this.invalidateActiveTransaction();
 		this.stopPolling();
@@ -336,6 +374,7 @@ export class DashboardState {
 	destroy = () => {
 		if (this.disposed) return;
 		this.disposed = true;
+		this.finalizeRecording();
 		this.clearCommandRestartTimer();
 		this.invalidateActiveTransaction();
 		this.stopPolling();

@@ -1,6 +1,15 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { Cable, CircleAlert, Plus, RefreshCw, Unplug } from '@lucide/svelte';
+	import {
+		Cable,
+		CircleAlert,
+		CircleStop,
+		Download,
+		Plus,
+		Radio,
+		RefreshCw,
+		Unplug
+	} from '@lucide/svelte';
 
 	import { Alert, AlertDescription, AlertTitle } from '$lib/components/ui/alert';
 	import { Badge } from '$lib/components/ui/badge';
@@ -11,6 +20,11 @@
 	import * as Select from '$lib/components/ui/select';
 	import { Switch } from '$lib/components/ui/switch';
 	import { DashboardState, setDashboardState } from '$lib/dashboard-state.svelte';
+	import {
+		createTemperatureCsv,
+		createTemperatureCsvFilename,
+		downloadTemperatureCsv
+	} from '$lib/recording';
 
 	const dashboard = new DashboardState();
 	setDashboardState(dashboard);
@@ -30,6 +44,17 @@
 		);
 		return index >= 0 ? String(index) : undefined;
 	});
+
+	const downloadRecording = () => {
+		if (!dashboard.recordingStartedAt) return;
+		const csv = createTemperatureCsv(dashboard.recordedSamples);
+		const filename = createTemperatureCsvFilename(dashboard.recordingStartedAt);
+		downloadTemperatureCsv(csv, filename);
+	};
+
+	const stopAndDownloadRecording = () => {
+		if (dashboard.stopRecording()) downloadRecording();
+	};
 </script>
 
 <svelte:head>
@@ -122,7 +147,9 @@
 									<Switch
 										id="live-polling"
 										checked={dashboard.livePolling}
-										disabled={!isConnected || dashboard.connectionStatus === 'error'}
+										disabled={!isConnected ||
+											dashboard.connectionStatus === 'error' ||
+											dashboard.recording}
 										onCheckedChange={dashboard.setLivePolling}
 									/>
 								</div>
@@ -137,17 +164,66 @@
 									min="100"
 									step="100"
 									value={dashboard.pollingInterval}
-									disabled={!isConnected}
+									disabled={!isConnected || dashboard.recording}
 									onchange={(event) =>
 										dashboard.setPollingInterval(event.currentTarget.valueAsNumber)}
 								/>
 							</div>
 							<Button
-								disabled={!isConnected || dashboard.busy || !dashboard.command.trim()}
+								disabled={!isConnected ||
+									dashboard.busy ||
+									!dashboard.command.trim() ||
+									dashboard.recording}
 								onclick={dashboard.refresh}
 							>
 								<RefreshCw class={['size-4', dashboard.busy && 'animate-spin']} /> Refresh
 							</Button>
+						</div>
+
+						<div
+							class="mt-5 flex flex-col gap-3 border-t pt-4 sm:flex-row sm:items-end sm:justify-between"
+						>
+							<div class="grid gap-1">
+								<span class="text-xs font-medium text-muted-foreground">Recording</span>
+								<div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
+									<span class="flex items-center gap-2 font-medium" aria-live="polite">
+										<span
+											class={[
+												'size-2 rounded-full',
+												dashboard.recording ? 'animate-pulse bg-red-500' : 'bg-muted-foreground/40'
+											]}
+											aria-hidden="true"
+										></span>
+										{dashboard.recording ? 'Recording in progress' : 'Not recording'}
+									</span>
+									<span class="text-muted-foreground">
+										{dashboard.recordedSamples.length}
+										{dashboard.recordedSamples.length === 1 ? 'sample' : 'samples'}
+									</span>
+								</div>
+							</div>
+							<div class="flex flex-wrap gap-2">
+								{#if dashboard.recording}
+									<Button variant="destructive" onclick={stopAndDownloadRecording}>
+										<CircleStop class="size-4" aria-hidden="true" /> Stop recording
+									</Button>
+								{:else}
+									<Button
+										disabled={!isConnected ||
+											dashboard.busy ||
+											!dashboard.command.trim() ||
+											Boolean(dashboard.error)}
+										onclick={dashboard.startRecording}
+									>
+										<Radio class="size-4" aria-hidden="true" /> Start recording
+									</Button>
+									{#if dashboard.recordingStartedAt}
+										<Button variant="outline" onclick={downloadRecording}>
+											<Download class="size-4" aria-hidden="true" /> Download CSV
+										</Button>
+									{/if}
+								{/if}
+							</div>
 						</div>
 					</section>
 				</div>
@@ -166,6 +242,7 @@
 									'size-2 rounded-full',
 									isConnected ? 'bg-emerald-300' : 'bg-muted-foreground/50'
 								]}
+								aria-hidden="true"
 							></span>
 							{dashboard.connectionStatus}
 						</Badge>
@@ -184,7 +261,7 @@
 				id="uart-command"
 				class="font-mono"
 				value={dashboard.command}
-				disabled={!dashboard.browserSupported}
+				disabled={!dashboard.browserSupported || dashboard.recording}
 				oninput={(event) => dashboard.setCommand(event.currentTarget.value)}
 			/>
 		</div>
@@ -229,7 +306,7 @@
 							<h2 class="font-mono text-xs font-medium tracking-wide text-zinc-400 uppercase">
 								UART printout
 							</h2>
-							<span class="size-2 rounded-full bg-emerald-400/80"></span>
+							<span class="size-2 rounded-full bg-emerald-400/80" aria-hidden="true"></span>
 						</div>
 						<ScrollArea class="h-80 lg:h-[clamp(24rem,48vh,34rem)]">
 							<pre
