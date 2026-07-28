@@ -95,11 +95,7 @@
 								<Plus class="size-4" /> Add device
 							</Button>
 							{#if isConnected}
-								<Button
-									variant="destructive"
-									disabled={dashboard.busy}
-									onclick={dashboard.disconnect}
-								>
+								<Button variant="destructive" onclick={dashboard.disconnect}>
 									<Unplug class="size-4" /> Disconnect
 								</Button>
 							{:else}
@@ -188,7 +184,7 @@
 				id="uart-command"
 				class="font-mono"
 				value={dashboard.command}
-				disabled={!dashboard.browserSupported || dashboard.busy}
+				disabled={!dashboard.browserSupported}
 				oninput={(event) => dashboard.setCommand(event.currentTarget.value)}
 			/>
 		</div>
