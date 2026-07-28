@@ -3,16 +3,19 @@ import { describe, expect, it } from 'vitest';
 import { createTemperatureCsv, createTemperatureCsvFilename } from './recording';
 
 describe('temperature recording CSV', () => {
-	it('creates timestamped temperature rows with stable formatting', () => {
+	it('creates local timestamps in a parseable format', () => {
+		const firstTimestamp = new Date(2026, 6, 28, 10, 0, 1, 123).toISOString();
+		const secondTimestamp = new Date(2026, 6, 28, 10, 0, 2, 456).toISOString();
+
 		expect(
 			createTemperatureCsv([
-				{ timestamp: '2026-07-28T10:00:01.123Z', temperatureC: 66 },
-				{ timestamp: '2026-07-28T10:00:02.456Z', temperatureC: -3.25 }
+				{ timestamp: firstTimestamp, temperatureC: 66 },
+				{ timestamp: secondTimestamp, temperatureC: -3.25 }
 			])
 		).toBe(
 			'timestamp,temperature_c\r\n' +
-				'2026-07-28T10:00:01.123Z,66.0\r\n' +
-				'2026-07-28T10:00:02.456Z,-3.3\r\n'
+				'2026-07-28 10:00:01.123,66.0\r\n' +
+				'2026-07-28 10:00:02.456,-3.3\r\n'
 		);
 	});
 
