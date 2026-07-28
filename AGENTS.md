@@ -1,1 +1,2 @@
-- Always use `bun` instead of `npm` or `node`
+- Always use `bun` instead of `npm` or `node`.
+- For Svelte, prefer using shared state with `.svelte.ts` files rather than prop drilling.
