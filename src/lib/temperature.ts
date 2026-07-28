@@ -1,6 +1,6 @@
 import { Data, Effect } from 'effect';
 
-const TEMPERATURE_LINE_MARKER = '[I] 00:';
+const TEMPERATURE_REGISTER_PATTERN = /\[I\]\s+00:\s*([0-9A-Fa-f]{8})(?![0-9A-Za-z])/;
 
 export interface TemperatureReading {
 	extractedHex: string;
@@ -16,18 +16,16 @@ export const parseTemperatureResponse = (
 	response: string
 ): Effect.Effect<TemperatureReading, ResponseParseError> =>
 	Effect.gen(function* () {
-		const line = response
-			.split(/\r?\n|\r/)
-			.find((candidate) => candidate.includes(TEMPERATURE_LINE_MARKER));
+		const registerMatch = TEMPERATURE_REGISTER_PATTERN.exec(response);
 
-		if (!line) {
+		if (!registerMatch) {
 			return yield* new ResponseParseError({
-				message: `Response does not contain ${TEMPERATURE_LINE_MARKER}`
+				message: 'Response does not contain a valid [I] 00: register value'
 			});
 		}
 
-		const normalizedLine = line.trimEnd();
-		const extractedHex = normalizedLine.slice(-4, -2).toUpperCase();
+		const registerValue = registerMatch[1];
+		const extractedHex = registerValue.slice(-4, -2).toUpperCase();
 
 		if (!/^[0-9A-F]{2}$/.test(extractedHex)) {
 			return yield* new ResponseParseError({

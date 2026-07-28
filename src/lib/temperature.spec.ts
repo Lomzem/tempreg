@@ -35,6 +35,18 @@ describe('parseTemperatureResponse', () => {
 		expect(reading.extractedHex).toBe('A4');
 	});
 
+	it('handles UART spacing and ANSI color sequences around the register line', () => {
+		const response =
+			'\u001b[97m[I]   00:  48F9AD1F\r\n\u001b[0m\u001b[97m[I]   09:  00000000\r\n\u001b[0m';
+		const reading = Effect.runSync(parseTemperatureResponse(response));
+
+		expect(reading).toEqual({
+			extractedHex: 'AD',
+			decimalValue: 173,
+			temperatureC: 66
+		});
+	});
+
 	it('fails when the marker is absent', () => {
 		const exit = Effect.runSyncExit(parseTemperatureResponse('[I] 01: 47CFA461'));
 
