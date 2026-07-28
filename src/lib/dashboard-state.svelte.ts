@@ -32,7 +32,7 @@ export class DashboardState {
 	connectionStatus = $state<ConnectionStatus>('disconnected');
 	command = $state('w f5 23');
 	pollingInterval = $state(1000);
-	livePolling = $state(false);
+	livePolling = $state(true);
 	busy = $state(false);
 	latestResponse = $state.raw<string | undefined>(undefined);
 	extractedByte = $state<string | undefined>(undefined);
@@ -156,6 +156,7 @@ export class DashboardState {
 		this.session = result.value;
 		this.connectionStatus = 'connected';
 		this.status = 'Connected';
+		if (this.livePolling) void this.refresh();
 	};
 
 	disconnect = async () => {

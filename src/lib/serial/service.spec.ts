@@ -1,7 +1,7 @@
 import { Effect } from 'effect';
 import { describe, expect, it, vi } from 'vitest';
 
-import { openSerialSession, SERIAL_OPTIONS } from './service';
+import { openSerialSession, SERIAL_OPTIONS, stripAnsiSequences } from './service';
 
 const COMPLETE_RESPONSE = `[I] 00: 47CFA461
 [I] 01: 00009AFC
@@ -36,6 +36,12 @@ const makePort = (
 };
 
 describe('openSerialSession', () => {
+	it('removes ANSI terminal formatting from UART output', () => {
+		expect(stripAnsiSequences('\u001b[97m[I]   00:  48F9AD1F\u001b[0m')).toBe(
+			'[I]   00:  48F9AD1F'
+		);
+	});
+
 	it('opens with fixed 115200 8N1 settings and appends a carriage return', async () => {
 		const writes: string[] = [];
 		const encoder = new TextEncoder();

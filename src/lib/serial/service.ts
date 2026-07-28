@@ -19,6 +19,10 @@ export const RESPONSE_IDLE_TIMEOUT_MS = 100;
 export const PARTIAL_RESPONSE_IDLE_TIMEOUT_MS = 1_000;
 
 const COMPLETE_RESPONSE_PATTERN = /\[I\]\s+09:/;
+const ANSI_SEQUENCE_PATTERN = new RegExp(`${String.fromCharCode(27)}\\[[0-?]*[ -/]*[@-~]`, 'g');
+
+export const stripAnsiSequences = (value: string): string =>
+	value.replace(ANSI_SEQUENCE_PATTERN, '');
 
 type InboxResult =
 	{ readonly _tag: 'Chunk'; readonly value: string } | { readonly _tag: 'Timeout' };
@@ -172,11 +176,13 @@ export const openSerialSession = (port: SerialPort): Effect.Effect<SerialSession
 							new SerialWriteError({ message: 'Could not write the UART command.', cause })
 					});
 
-					let response = '';
+					let rawResponse = '';
 					while (true) {
 						const result = yield* Effect.tryPromise({
 							try: () =>
-								inbox.take(response ? PARTIAL_RESPONSE_IDLE_TIMEOUT_MS : RESPONSE_IDLE_TIMEOUT_MS),
+								inbox.take(
+									rawResponse ? PARTIAL_RESPONSE_IDLE_TIMEOUT_MS : RESPONSE_IDLE_TIMEOUT_MS
+								),
 							catch: (cause) =>
 								cause instanceof SerialReadError
 									? cause
@@ -185,7 +191,8 @@ export const openSerialSession = (port: SerialPort): Effect.Effect<SerialSession
 
 						if (result._tag === 'Timeout') break;
 
-						response += result.value;
+						rawResponse += result.value;
+						const response = stripAnsiSequences(rawResponse);
 						onProgress?.(response);
 						if (COMPLETE_RESPONSE_PATTERN.test(response)) return response.trimEnd();
 					}
