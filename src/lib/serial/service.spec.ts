@@ -67,6 +67,27 @@ describe('openSerialSession', () => {
 		await Effect.runPromise(session.close);
 	});
 
+	it('keeps a partial response alive across a short processing pause', async () => {
+		const writes: string[] = [];
+		const progress: string[] = [];
+		const encoder = new TextEncoder();
+		const { port } = makePort((command, controller) => {
+			writes.push(command);
+			controller.enqueue(encoder.encode('[I] 00: 47CFA461\n'));
+			setTimeout(() => controller.enqueue(encoder.encode('[I] 09:')), 150);
+		});
+		const session = await Effect.runPromise(openSerialSession(port));
+
+		const response = await Effect.runPromise(
+			session.transact('w f5 23', (partial) => progress.push(partial))
+		);
+
+		expect(writes).toEqual(['w f5 23\r']);
+		expect(progress[0]).toBe('[I] 00: 47CFA461\n');
+		expect(response).toContain('[I] 09:');
+		await Effect.runPromise(session.close);
+	});
+
 	it('keeps discarding partial attempts until a complete response arrives', async () => {
 		const writes: string[] = [];
 		const encoder = new TextEncoder();

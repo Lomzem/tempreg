@@ -191,7 +191,11 @@ export class DashboardState {
 		this.busy = true;
 		this.error = undefined;
 		this.status = 'Reading temperature…';
-		const transaction = await this.runEffect(activeSession.transact(command));
+		const transaction = await this.runEffect(
+			activeSession.transact(command, (response) => {
+				if (!this.disposed && this.session === activeSession) this.latestResponse = response;
+			})
+		);
 		if (this.disposed || this.session !== activeSession) {
 			this.busy = false;
 			return false;

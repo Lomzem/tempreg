@@ -16,8 +16,9 @@ export const SERIAL_OPTIONS: SerialOptions = {
 };
 
 export const RESPONSE_IDLE_TIMEOUT_MS = 100;
+export const PARTIAL_RESPONSE_IDLE_TIMEOUT_MS = 1_000;
 
-const COMPLETE_RESPONSE_PATTERN = /(?:^|\r?\n|\r)\[I\]\s+09:\s*[0-9A-Fa-f]{8}(?=\r?\n|\r|$)/;
+const COMPLETE_RESPONSE_PATTERN = /\[I\]\s+09:/;
 
 type InboxResult =
 	{ readonly _tag: 'Chunk'; readonly value: string } | { readonly _tag: 'Timeout' };
@@ -68,7 +69,10 @@ class ChunkInbox {
 
 export interface SerialSession {
 	readonly port: SerialPort;
-	readonly transact: (command: string) => Effect.Effect<string, SerialError>;
+	readonly transact: (
+		command: string,
+		onProgress?: (response: string) => void
+	) => Effect.Effect<string, SerialError>;
 	readonly close: Effect.Effect<void, SerialConnectionError>;
 }
 
@@ -155,7 +159,10 @@ export const openSerialSession = (port: SerialPort): Effect.Effect<SerialSession
 		};
 		void readPump();
 
-		const runTransaction = (command: string): Effect.Effect<string, SerialError> =>
+		const runTransaction = (
+			command: string,
+			onProgress?: (response: string) => void
+		): Effect.Effect<string, SerialError> =>
 			Effect.gen(function* () {
 				while (true) {
 					inbox.clear();
@@ -168,7 +175,8 @@ export const openSerialSession = (port: SerialPort): Effect.Effect<SerialSession
 					let response = '';
 					while (true) {
 						const result = yield* Effect.tryPromise({
-							try: () => inbox.take(RESPONSE_IDLE_TIMEOUT_MS),
+							try: () =>
+								inbox.take(response ? PARTIAL_RESPONSE_IDLE_TIMEOUT_MS : RESPONSE_IDLE_TIMEOUT_MS),
 							catch: (cause) =>
 								cause instanceof SerialReadError
 									? cause
@@ -178,12 +186,14 @@ export const openSerialSession = (port: SerialPort): Effect.Effect<SerialSession
 						if (result._tag === 'Timeout') break;
 
 						response += result.value;
+						onProgress?.(response);
 						if (COMPLETE_RESPONSE_PATTERN.test(response)) return response.trimEnd();
 					}
 				}
 			});
 
-		const transact = (command: string) => semaphore.withPermits(1)(runTransaction(command));
+		const transact = (command: string, onProgress?: (response: string) => void) =>
+			semaphore.withPermits(1)(runTransaction(command, onProgress));
 		const close = Effect.tryPromise({
 			try: async () => {
 				closing = true;
