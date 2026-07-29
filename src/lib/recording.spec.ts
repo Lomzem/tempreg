@@ -24,8 +24,10 @@ describe('temperature recording CSV', () => {
 	});
 
 	it('creates a filesystem-safe filename from the session start time', () => {
-		expect(createTemperatureCsvFilename('2026-07-28T10:00:00.123Z')).toBe(
-			'temperature-session-2026-07-28T10-00-00-123Z.csv'
+		const startedAt = new Date(2026, 6, 28, 10, 0, 0, 123).toISOString();
+
+		expect(createTemperatureCsvFilename(startedAt)).toBe(
+			'temperature-session-2026-07-28_10-00-00-123.csv'
 		);
 	});
 });

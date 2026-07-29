@@ -18,7 +18,7 @@ export const createTemperatureCsv = (samples: readonly RecordedTemperatureSample
 };
 
 export const createTemperatureCsvFilename = (startedAt: string): string =>
-	`temperature-session-${startedAt.replace(/[:.]/g, '-')}.csv`;
+	`temperature-session-${formatLocalTimestamp(startedAt).replace(' ', '_').replace(/[:.]/g, '-')}.csv`;
 
 export const downloadTemperatureCsv = (csv: string, filename: string): void => {
 	const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
